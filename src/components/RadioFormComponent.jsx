@@ -7,7 +7,7 @@ const RadioFormComponent = () => {
   );
   const [wordCount, setWordCount] = useState('');
   const [detailedResponses, setDetailedResponses] = useState([]); // State for detailed responses
-
+  const openAIKey = import.meta.env.VITE_OPENAI_KEY;
 
   const handleGenerate = async () => {
     const sectionsCount = Math.ceil(wordCount / 1000); // Determine sections count based on word count
