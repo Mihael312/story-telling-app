@@ -297,18 +297,14 @@ Do not generate anything else; failure to comply will result in penalties.`,
         <h3 className="text-lg font-semibold text-gray-800">
           Generated Detailed Responses:
         </h3>
-
-        <br/>
         <div className="space-y-4 mt-4">
           {detailedResponses.map((response, index) => (
             <div key={index} className="p-4 bg-gray-100 rounded-lg shadow-md">
-
-
               <h4 className="text-md font-bold text-gray-700">
                 {response.title}
               </h4>
-
-
+              <br/>
+              <br/>
               <div dangerouslySetInnerHTML={{ __html: response.content }} />
             </div>
           ))}
