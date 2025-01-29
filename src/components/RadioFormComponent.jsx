@@ -1,270 +1,367 @@
 import React, { useState } from "react";
+import { prompts } from "./prompts";
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import Markdown from 'react-markdown';
 
 const RadioFormComponent = () => {
   const [selectedOption, setSelectedOption] = useState("");
-  const [inputValue, setInputValue] = useState(
-    "YourSecret Invisible Force You Aren't Taking Advantage Of (Energy=Magic)-NOBSguide"
-  );
-  const [wordCount, setWordCount] = useState("");
-  const [detailedResponses, setDetailedResponses] = useState([]); // State for detailed responses
-  const [loading, setLoading] = useState(false); // State for loading
-  const openAIKey = import.meta.env.VITE_OPENAI_KEY;
+  const [scriptTitle, setScriptTitle] = useState("");
+  const [additionalData, setAdditionalData] = useState("");
+  const [excludedWords, setExcludedWords] = useState("");
+  const [desiredWordCount, setDesiredWordCount] = useState("");
+  const [generatedSections, setGeneratedSections] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  // Function to pause for a given time (in milliseconds)
+  const [selectedModel, setSelectedModel] = useState("o1-preview");
+
+  const openAIKey = import.meta.env.VITE_OPENAI_KEY;
+  const anthropicKey = import.meta.env.VITE_ANTHROPIC_KEY;
+
+  // Option mapping for both display and storage
+  const optionMap = {
+    EnergyControl: "Energy Control",
+    TheTruthAboutLifeDeathAndTheAfterlife: "The truth about life, death & the afterlife",
+    ConspiracyControllingReality: "Conspiracy Controlling Reality",
+    EscapingSimulation: "Escaping Simulation",
+    TimeLoopsAndAlternateRealities: "Time Loops, Alternate Realities",
+  };
+
+  // Sleep function
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const handleGenerate = async () => {
-    if (!selectedOption || !inputValue || !wordCount) {
-      alert(
-        "Please select an option, enter a value, and specify the word count."
-      );
+  const callAPI = async (messages, maxTokens) => {
+    const isAnthropic = selectedModel.includes("claude");
+
+    const endpoint = isAnthropic
+      ? "https://api.anthropic.com/v1/messages"
+      : "https://api.openai.com/v1/chat/completions";
+
+    const headers = isAnthropic
+      ? {
+          "x-api-key": anthropicKey,
+          "Content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        }
+      : {
+          Authorization: `Bearer ${openAIKey}`,
+          "Content-type": "application/json",
+        };
+
+    let modelName = selectedModel;
+    if (selectedModel.includes("claude")) {
+      modelName = "claude-3-5-sonnet-20241022";
+    }
+
+    let body;
+    if (isAnthropic) {
+      // Anthropic format
+      body = {
+        model: modelName,
+        messages,
+        max_tokens: maxTokens,
+        temperature: 0.2,
+      };
+    } else {
+      // OpenAI format
+      body = {
+        model: modelName,
+        messages,
+      };
+    }
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    return response.json();
+  };
+
+  const handleGenerateScript = async () => {
+    if (!selectedOption || !scriptTitle || !desiredWordCount) {
+      alert("Please select an option, enter a title, and specify the word count.");
       return;
     }
 
-    setLoading(true); // Set loading to true
-    setDetailedResponses([]); // Clear previous responses
+    setLoading(true);
+    setGeneratedSections([]);
 
     try {
-      // Dynamically determine the number of sections based on word count
-      const sectionsCount = wordCount > 1000 ? Math.ceil(wordCount / 1000) : 1;
+      const selectedPrompt = prompts[selectedOption];
+      if (!selectedPrompt) {
+        alert("No prompt found for the selected option.");
+        setLoading(false);
+        return;
+      }
 
-      // First fetch to get section titles
-      const initialResponse = await fetch(
-        "https://api.openai.com/v1/chat/completions",
+      let sectionsCount;
+      // Original formula for o1-preview
+      if (selectedModel === "o1-preview") {
+        sectionsCount = desiredWordCount > 1000 ? Math.ceil(desiredWordCount / 1000) : 1;
+      } else {
+        // New formula for claude 3.5 sonnet and gpt-4o
+        // For example, 10000 words -> about 13 sections
+        // 10000 / 770 ≈ 12.99, round up to 13
+        sectionsCount = desiredWordCount > 1000 ? Math.ceil(desiredWordCount / 1000) : 1;
+      }
+
+      const initialMessages = [
         {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${openAIKey}`,
-            "Content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "gpt-4o",
-            messages: [
-              {
-                role: "system",
-                content: `Generate ${sectionsCount} section titles, tones, and formats {title: string, tone: string, format: string} related to "${selectedOption}" based on the following summary. Ensure each section follows a logical, chronological order.
+          role: "user",
+          content: `You are a YouTube video script writer and you have to generate ONLY a JSON array of ${sectionsCount} objects:
+  
+          Each object should have the following structure:
+          {
+            "title": "Section title",
+            "tone": "Tone of the section",
+            "format": "A concise description or example of how the section should be structured",
+            "data": "Relevant data to be discussed in this section ("" if none)"
+          } 
 
-Data Points Separator: Use %%% to split data points.
+          The script domain is ${selectedOption} and the script title is ${scriptTitle}
 
-TONE
+          *Ensure each section follows a logical, chronological order.* 
 
-Encouraging, empowering, uplifting, warm, and friendly.
-Balance mysticism and practicality by using metaphors (e.g., rivers, threads, cocoons) to simplify complex spiritual concepts.
-Incorporate science alongside ancient wisdom.
+          ***TONE AND FORMAT:*** 
+          ${selectedPrompt}
 
-FORMAT:
-Hook: Present a universal human experience.
-Re-Hook: Pose questions like "What if…?" or "Have you considered…?"
-Introduction: Establish the importance of understanding one’s energy field, setting the stakes for transformation.
-Contents:
-Detailed explanations of the aura layers and chakras.
-Problem identification (e.g., energy blockages).
-Practical tools (e.g., pranayama, meditation, mindfulness) with step-by-step guidance.
-CTA (Call to Action): Encourage actions such as trying a technique, incorporating exercises, or taking steps toward goals with a positive mindset
-
-Do not generate anything else; failure to comply will result in penalties.`,
-                                        },
-              { role: "user", content: inputValue },
-            ],
-            max_tokens: 600,
-            temperature: 0.3,
-          }),
+          ***ADDITIONAL INFO/DATA:*** 
+          ${additionalData}`
         }
-      );
+      ];
 
-      const initialData = await initialResponse.json();
-      const titles = initialData.choices[0].message.content
-        .split("%%%")
-        .filter(Boolean); // Split titles into an array
+      // Fetch the section titles
+      const initialResponse = await callAPI(initialMessages, 2000);
 
-      console.log("Titles returned:", titles);
+      let titles;
+      if (selectedModel.includes("claude")) {
+        titles = JSON.parse(
+          initialResponse.content[0].text
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim()
+        );
+      } else {
+        titles = JSON.parse(
+          initialResponse.choices[0].message.content
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim()
+        );
+      }
 
-      for (let i = 0; i < titles.length; i++) {
-        const title = titles[i];
-        try {
-          const response = await fetch(
-            "https://api.openai.com/v1/chat/completions",
+      console.log("Section Titles:", titles);
+
+      const batchSize = 5;
+      let batchIndex = 0;
+
+      while (batchIndex * batchSize < titles.length) {
+        const batch = titles.slice(batchIndex * batchSize, batchIndex * batchSize + batchSize);
+
+        const batchPromises = batch.map(async (titleObj, index) => {
+          const currentIndex = batchIndex * batchSize + index;
+          const prevSection = currentIndex > 0 ? titles[currentIndex - 1].title : "There is no Previous section";
+          const nextSection = currentIndex < titles.length - 1 ? titles[currentIndex + 1].title : "There is no Next section";
+
+          const contentMessages = [
             {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${openAIKey}`,
-                "Content-type": "application/json",
-              },
-              body: JSON.stringify({
-                model: "gpt-4o",
-                messages: [
-                  {
-                    role: "system",
-                    content: `Provide detailed content min 1000 words for the section with title and tone: ${title} related to ${selectedOption}, ensuring it's well-structured and easy to read. Follow these formatting guidelines:
-                              Do not include the title in the response, only the content.
-                              Use appropriate headings (H1, H2, H3) for different sections, ensuring each section has a clear heading.
-                              Break the content into paragraphs for readability.
-                              Highlight important terms and concepts using bold text.
-                              Use lists (bulleted or numbered) where applicable for clarity.
-                              Ensure the response has clarity and flow, with smooth transitions between ideas.
-                              Maintain a professional, informative, and engaging tone.
-                              The goal is a readable, well-formatted response that's easy to follow and absorb.`,
-                  },
-                  { role: "user", content: inputValue },
-                ],
-                max_tokens: 1000,
-                temperature: 0.5,
-              }),
+              role: "user",
+              content: `
+              You are a YouTube video script writer and must write a detailed story/script text (~1000 words) for the following section. 
+              - Do not include scene directions or narrator markers, only the spoken text.
+              - Keep the language simple, avoiding mystical or overly complex words.
+              - Don't use the welcoming phrases at the beginning of the sections
+              - Ensure coherence and flow from the previous section to this one.
+              - If possible, exclude these words: ${excludedWords}
+
+              Title: ${titleObj.title}
+              Domain: ${selectedOption}
+
+              Current Section: ${titleObj.title}
+              Previous Section: ${prevSection}
+              Next Section: ${nextSection}`
             }
-          );
+          ];
 
-          const data = await response.json();
-          const formattedContent = formatContent(
-            data.choices[0].message.content
-          );
+          try {
+            const contentResponse = await callAPI(contentMessages, 2000);
+            const content = selectedModel.includes("claude")
+              ? contentResponse.content[0].text
+              : contentResponse.choices[0].message.content;
 
-          // Add the new response to the state
-          setDetailedResponses((prev) => [
-            ...prev,
-            { title, content: formattedContent },
-          ]);
+            return { title: titleObj, content };
+          } catch (error) {
+            console.error(`Error fetching content for title: ${titleObj.title}`, error);
+            return { title: titleObj, content: "Error fetching content" };
+          }
+        });
 
-          console.log(`Fetched content for title: ${title}`);
-        } catch (error) {
-          console.error(`Error fetching content for title: ${title}`, error);
+        const results = await Promise.all(batchPromises);
+        setGeneratedSections((prev) => [...prev, ...results]);
 
-          // Add an error message for the failed request
-          setDetailedResponses((prev) => [
-            ...prev,
-            { title, content: "Error fetching content" },
-          ]);
-        }
+        batchIndex++;
 
-        // Add a delay of 3 seconds between requests
-        if (i < titles.length - 1) {
-          console.log("Pausing for 3 seconds...");
-          await sleep(3000);
+        // If there are more sections to generate, wait for a minute (to avoid rate limits)
+        if (batchIndex * batchSize < titles.length) {
+          await sleep(60000);
         }
       }
+
     } catch (error) {
-      console.error("Error during fetch:", error);
+      console.error("Error during script generation:", error);
     } finally {
-      setLoading(false); // Set loading to false when the process is finished
+      setLoading(false);
     }
   };
 
-  const formatContent = (content) => {
-    content = content.trim(); // Remove extra leading/trailing whitespace
+  const handleDownloadDoc = () => {
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: generatedSections
+            .map((section) => {
+              const paragraphs = section.content.split("\n").map((line) => {
+                let formattedLine = line;
 
-    // Format headers ensuring they aren't duplicated
-    content = content.replace(
-      /^#### (.*?)$/gm,
-      '<h4 class="text-sm font-semibold">$1</h4>'
-    ); // For h4
-    content = content.replace(
-      /^### (.*?)$/gm,
-      '<h3 class="text-md font-medium">$1</h3>'
-    ); // For h3
-    content = content.replace(
-      /^## (.*?)$/gm,
-      '<h2 class="text-lg font-semibold">$1</h2>'
-    ); // For h2
-    content = content.replace(
-      /^# (.*?)$/gm,
-      '<h1 class="text-xl font-bold">$1</h1>'
-    ); // For h1
+                // Replace <b> and <i> tags
+                formattedLine = formattedLine.replace(/<b>(.*?)<\/b>/g, "**$1**");
+                formattedLine = formattedLine.replace(/<i>(.*?)<\/i>/g, "_$1_");
 
-    // Format bold and italic text
-    content = content.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>"); // bold
-    content = content.replace(/\*(.*?)\*/g, "<em>$1</em>"); // italic
+                const textRun = new TextRun(formattedLine);
+                return new Paragraph({
+                  children: [textRun],
+                });
+              });
+              return paragraphs;
+            })
+            .flat(),
+        },
+      ],
+    });
 
-    // Format unordered lists
-    content = content.replace(
-      /^\s*-\s+(.*)$/gm,
-      '<li class="list-disc pl-5">$1</li>'
-    ); // List items
+    Packer.toBlob(doc).then((blob) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
 
-    // Wrap list items in a <ul> tag
-    content = content.replace(
-      /(<li.*<\/li>)/g,
-      '<ul class="list-disc pl-5">$1</ul>'
-    ); // Wrap <li> elements with <ul>
+      let filename =
+        selectedOption
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "_")
+          .replace(/_+/g, "_")
+          .replace(/^_|_$/g, "") || "generated_content";
 
-    // Clean up newlines and non-content lines, wrapping paragraphs in <p> tags
-    content = content
-      .split("\n")
-      .filter((line) => line.trim() !== "") // Remove empty lines
-      .map((line) => {
-        // Check if line is a list item or header to avoid wrapping it in <p>
-        if (line.startsWith("<li>") || line.startsWith("<h")) {
-          return line; // Don't wrap list or header in <p>
-        } else {
-          return `<p class="text-gray-800">${line}</p>`; // Wrap regular text in <p>
-        }
-      })
-      .join("\n");
-
-    return content;
+      link.href = url;
+      link.download = `${filename}.docx`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+    });
   };
 
   return (
     <>
       <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-md">
-        <h2 className="text-xl font-bold mb-4 text-gray-800">
-          Choose an Option
-        </h2>
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Select AI Model:
+          </label>
+          <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-gray-700"
+          >
+            <option value="o1-preview">o1-preview</option>
+            <option value="claude 3.5 sonnet">claude 3.5 sonnet</option>
+            <option value="gpt-4o">gpt-4o</option>
+          </select>
+        </div>
+
+        <h2 className="text-xl font-bold mb-4 text-gray-800">Choose an Option</h2>
 
         <div className="space-y-3 mb-6">
-          {[
-            "Energy Control",
-            "The truth about life, death & the afterlife",
-            "ConspiracyControllingReality",
-            "Escaping Simulation",
-            "Time Loops, Alternate Realities",
-          ].map((option, index) => (
-            <label
-              key={index}
-              className="flex items-center space-x-3 cursor-pointer"
-            >
+          {Object.entries(optionMap).map(([key, value]) => (
+            <label key={key} className="flex items-center space-x-3 cursor-pointer">
               <input
                 type="radio"
                 name="options"
-                value={option}
+                value={key}
                 className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                checked={selectedOption === option}
+                checked={selectedOption === key}
                 onChange={(e) => setSelectedOption(e.target.value)}
               />
-              <span className="text-gray-700">{option}</span>
+              <span className="text-gray-700">{value}</span>
             </label>
           ))}
         </div>
 
         <div className="mb-6">
           <label
-            htmlFor="inputField"
+            htmlFor="scriptTitle"
             className="block text-sm font-medium text-gray-700 mb-2"
           >
-            Enter a value:
+            Enter the title of the script:
           </label>
           <input
             type="text"
-            id="inputField"
+            id="scriptTitle"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-gray-700"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Enter something here"
+            value={scriptTitle}
+            onChange={(e) => setScriptTitle(e.target.value)}
+            placeholder="Enter the script title"
           />
         </div>
 
-        {/* Word count input section */}
         <div className="mb-6">
           <label
-            htmlFor="wordCount"
+            htmlFor="additionalData"
+            className="block text-sm font-medium text-gray-700 mb-2"
+          >
+            Enter additional data (summary, narrative, etc.):
+          </label>
+          <textarea
+  id="additionalData"
+  className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-gray-700"
+  style={{ height: "200px", resize: "vertical", whiteSpace: "pre-wrap" }}
+  value={additionalData}
+  onChange={(e) => setAdditionalData(e.target.value)}
+  placeholder="Enter additional data"
+/>
+
+        </div>
+
+        <div className="mb-6">
+          <label
+            htmlFor="excludedWords"
+            className="block text-sm font-medium text-gray-700 mb-2"
+          >
+            Words to exclude (not guaranteed):
+          </label>
+          <input
+            type="text"
+            id="excludedWords"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-gray-700"
+            value={excludedWords}
+            onChange={(e) => setExcludedWords(e.target.value)}
+            placeholder="Enter forbidden words"
+          />
+        </div>
+
+        <div className="mb-6">
+          <label
+            htmlFor="desiredWordCount"
             className="block text-sm font-medium text-gray-700 mb-2"
           >
             Desired Word Count:
           </label>
           <input
             type="number"
-            id="wordCount"
+            id="desiredWordCount"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-gray-700"
-            value={wordCount}
-            onChange={(e) => setWordCount(e.target.value)}
+            value={desiredWordCount}
+            onChange={(e) => setDesiredWordCount(e.target.value)}
             placeholder="1000"
             min={1000}
             max={50000}
@@ -273,17 +370,16 @@ Do not generate anything else; failure to comply will result in penalties.`,
         </div>
 
         <button
-          onClick={handleGenerate}
+          onClick={handleGenerateScript}
           className="w-full px-4 py-2 text-white bg-blue-600 rounded-lg shadow-md hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
         >
           Generate
         </button>
       </div>
 
-      {/* Spinner Loading Animation */}
       {loading && (
         <div className="flex justify-center mt-6 flex-col items-center">
-          <p className="mb-4 text-gray-700">This may take a few minutes...</p>
+          <p className="mb-4 text-gray-700">This may take a few moments...</p>
           <div
             className="spinner-border animate-spin inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full"
             role="status"
@@ -293,19 +389,33 @@ Do not generate anything else; failure to comply will result in penalties.`,
         </div>
       )}
 
+      {!loading && generatedSections.length > 0 && (
+        <div className="mt-6">
+          <button
+            onClick={handleDownloadDoc}
+            className="w-25 px-4 py-2 text-white ms-5 bg-green-600 rounded-lg shadow-md hover:bg-green-700 focus:ring-2 focus:ring-green-500 focus:ring-opacity-50"
+          >
+            Download Word Document
+          </button>
+        </div>
+      )}
+
       <div className="mt-6 mx-3">
-        <h3 className="text-lg font-semibold text-gray-800">
-          Generated Detailed Responses:
-        </h3>
-        <div className="space-y-4 mt-4">
-          {detailedResponses.map((response, index) => (
+        <h3 className="text-lg ms-2 font-semibold text-gray-800">Generated Detailed Responses:</h3>
+        <div className="space-y-4 mt-4 mx-5 p-5">
+          {generatedSections.map((section, index) => (
             <div key={index} className="p-4 bg-gray-100 rounded-lg shadow-md">
-              <h4 className="text-md font-bold text-gray-700">
-                {response.title}
+              <h3 className="text-md font-bold text-gray-700 mb-5">
+                <strong>Section title:</strong> {section.title.title}
+              </h3>
+              <h4 className="text-md font-bold text-gray-700 mb-5">
+                <strong>Section format:</strong> {section.title.format}
               </h4>
-              <br/>
-              <br/>
-              <div dangerouslySetInnerHTML={{ __html: response.content }} />
+              <h4 className="text-md font-bold text-gray-700 mb-5">
+                <strong>Section additional data:</strong> {section.title.data === "" ? "None" : section.title.data}
+              </h4>
+
+              <Markdown>{section.content}</Markdown>
             </div>
           ))}
         </div>
